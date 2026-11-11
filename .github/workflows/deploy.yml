@@ -3,7 +3,7 @@
 # =============================================================================
 # Thin orchestrator that calls reusable workflows in sequence.
 # All real work lives in:
-#   - .github/workflows/reusable/*.yml  (job-level)
+#   - .github/workflows/*.yml  (job-level)
 #   - .github/actions/*                 (step-level)
 #   - scripts/*.sh                      (business logic)
 #
@@ -39,7 +39,7 @@ jobs:
   # ===========================================================================
   infra:
     name: "01 · Infrastructure"
-    uses: ./.github/workflows/reusable/terraform-apply.yml
+    uses: ./.github/workflows/terraform-apply.yml
     with:
       environment: dev
     secrets: inherit
@@ -50,7 +50,7 @@ jobs:
   build:
     name: "02 · Build + Scan + Push"
     needs: infra
-    uses: ./.github/workflows/reusable/build-scan-push.yml
+    uses: ./.github/workflows/build-scan-push.yml
     with:
       image-name: atlas-platform-app
       image-tag: "${{ github.run_number }}"
@@ -62,7 +62,7 @@ jobs:
   deploy-dev:
     name: "03 · Deploy Dev"
     needs: build
-    uses: ./.github/workflows/reusable/helm-deploy.yml
+    uses: ./.github/workflows/helm-deploy.yml
     with:
       environment: dev
       image-name: atlas-platform-app
@@ -79,7 +79,7 @@ jobs:
     name: "04 · Deploy Staging"
     needs: deploy-dev
     if: github.ref == 'refs/heads/main'
-    uses: ./.github/workflows/reusable/helm-deploy.yml
+    uses: ./.github/workflows/helm-deploy.yml
     with:
       environment: staging
       image-name: atlas-platform-app

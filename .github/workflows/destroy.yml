@@ -55,7 +55,7 @@ jobs:
   destroy:
     name: "Destroy (${{ inputs.environment }})"
     needs: validate
-    uses: ./.github/workflows/reusable/terraform-destroy.yml
+    uses: ./.github/workflows/terraform-destroy.yml
     with:
       environment: ${{ inputs.environment }}
     secrets: inherit
