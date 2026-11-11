@@ -132,7 +132,7 @@ echo "Testing pod: ${POD_NAME}"
 
 HEALTH_RESPONSE=$(kubectl exec "${POD_NAME}" \
   --namespace "${NAMESPACE}" \
-  -- curl -sf http://localhost:8000/health 2>&1)
+  -- python -c "import urllib.request; print(urllib.request.urlopen('http://localhost:8000/health').read().decode())" 2>&1)
 
 HEALTH_RESPONSE=$(echo "${HEALTH_RESPONSE}" | tr -d '[:space:]')
 
