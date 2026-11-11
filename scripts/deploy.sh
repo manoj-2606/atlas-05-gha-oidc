@@ -88,6 +88,9 @@ echo ""
 echo "##[section]Ensure namespace: ${NAMESPACE}"
 kubectl create namespace "${NAMESPACE}" --dry-run=client -o yaml | kubectl apply -f -
 
+# --- Clean stuck release (safe for fresh deploys) ---
+helm uninstall "${RELEASE_NAME}" --namespace "${NAMESPACE}" 2>/dev/null || true
+
 # --- Helm Upgrade ---
 echo ""
 echo "##[section]Helm Upgrade"
