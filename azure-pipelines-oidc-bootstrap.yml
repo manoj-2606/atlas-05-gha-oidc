@@ -1,0 +1,280 @@
+# =============================================================================
+# OIDC Bootstrap Pipeline — One-Time Setup
+# =============================================================================
+# Fully automated: creates backend storage, then OIDC trust.
+#
+# bootstrap:
+#   Stage 1: Backend Storage (RG + Storage Account + Container) — idempotent
+#   Stage 2: OIDC Provision (App Registration + Federated Credentials)
+#
+# destroy:
+#   Stage 3: Deletes backend RG (storage account + tfstate) ONLY.
+#            App Registration + Federated Credentials stay intact (free, permanent).
+#            Requires approval via environment gate.
+#
+# NOTE: After destroy, OIDC resources become unmanaged by Terraform (state is gone).
+#       To re-manage them, import into a new state or recreate via bootstrap.
+# =============================================================================
+
+trigger: none   # Manual runs only — this is a one-time operation
+
+parameters:
+  - name: action
+    displayName: "Action"
+    type: string
+    default: bootstrap
+    values:
+      - bootstrap
+      - destroy
+
+variables:
+  - name: serviceConnection
+    value: "MI-ADO-API"
+  - name: terraformVersion
+    value: "1.9.8"
+  - name: workingDirectory
+    value: "$(System.DefaultWorkingDirectory)/terraform/oidc"
+  - name: location
+    value: "centralindia"
+  # Backend config
+  - name: backendResourceGroup
+    value: "rg-atlas-tfstate"
+  - name: backendStorageAccount
+    value: "atlastfstate2606"
+  - name: backendContainer
+    value: "tfstate"
+  - name: backendKey
+    value: "atlas-05-oidc.tfstate"
+
+pool:
+  vmImage: ubuntu-latest
+
+stages:
+
+  # ===========================================================================
+  # Stage 1: Bootstrap Backend Storage (idempotent)
+  # ===========================================================================
+  - stage: BackendStorage
+    displayName: "1 — Bootstrap Backend Storage"
+    condition: eq('${{ parameters.action }}', 'bootstrap')
+    jobs:
+      - job: CreateBackend
+        displayName: "Create State Storage (idempotent)"
+        steps:
+          - task: AzureCLI@2
+            displayName: "Create RG + Storage Account + Container"
+            inputs:
+              azureSubscription: $(serviceConnection)
+              scriptType: bash
+              scriptLocation: inlineScript
+              inlineScript: |
+                set -euo pipefail
+
+                echo "##[section]Creating backend resource group"
+                az group create \
+                  --name $(backendResourceGroup) \
+                  --location $(location) \
+                  --tags purpose=terraform-state managed-by=pipeline \
+                  --output none || true
+
+                echo "##[section]Creating storage account"
+                az storage account create \
+                  --name $(backendStorageAccount) \
+                  --resource-group $(backendResourceGroup) \
+                  --location $(location) \
+                  --sku Standard_LRS \
+                  --kind StorageV2 \
+                  --min-tls-version TLS1_2 \
+                  --allow-blob-public-access false \
+                  --output none || true
+
+                echo "##[section]Creating blob container"
+                az storage container create \
+                  --name $(backendContainer) \
+                  --account-name $(backendStorageAccount) \
+                  --auth-mode login \
+                  --output none || true
+
+                echo "##[section]Backend storage ready"
+
+  # ===========================================================================
+  # Stage 2: OIDC Bootstrap (terraform apply)
+  # ===========================================================================
+  - stage: OIDCBootstrap
+    displayName: "2 — OIDC Bootstrap"
+    condition: eq('${{ parameters.action }}', 'bootstrap')
+    dependsOn: BackendStorage
+    jobs:
+      - job: ProvisionOIDC
+        displayName: "Provision App Registration + Federated Credentials"
+        steps:
+
+          # --- Install Terraform ---
+          - task: Bash@3
+            displayName: "Install Terraform $(terraformVersion)"
+            inputs:
+              targetType: inline
+              script: |
+                set -euo pipefail
+                echo "##[section]Installing Terraform $(terraformVersion)"
+                wget -qO terraform.zip "https://releases.hashicorp.com/terraform/$(terraformVersion)/terraform_$(terraformVersion)_linux_amd64.zip"
+                unzip -qo terraform.zip -d /usr/local/bin/
+                rm terraform.zip
+                terraform version
+
+          # --- Terraform Init ---
+          - task: AzureCLI@2
+            displayName: "Terraform Init"
+            inputs:
+              azureSubscription: $(serviceConnection)
+              scriptType: bash
+              addSpnToEnvironment: true
+              scriptLocation: inlineScript
+              workingDirectory: $(workingDirectory)
+              inlineScript: |
+                set -euo pipefail
+
+                export ARM_USE_OIDC=true
+                export ARM_CLIENT_ID=$servicePrincipalId
+                export ARM_TENANT_ID=$tenantId
+                export ARM_SUBSCRIPTION_ID=$(az account show --query id -o tsv)
+
+                echo "##[section]Terraform Init"
+                terraform init \
+                  -backend-config="resource_group_name=$(backendResourceGroup)" \
+                  -backend-config="storage_account_name=$(backendStorageAccount)" \
+                  -backend-config="container_name=$(backendContainer)" \
+                  -backend-config="key=$(backendKey)" \
+                  -backend-config="use_oidc=true"
+
+          # --- Terraform Plan ---
+          - task: AzureCLI@2
+            displayName: "Terraform Plan"
+            inputs:
+              azureSubscription: $(serviceConnection)
+              scriptType: bash
+              addSpnToEnvironment: true
+              scriptLocation: inlineScript
+              workingDirectory: $(workingDirectory)
+              inlineScript: |
+                set -euo pipefail
+
+                export ARM_USE_OIDC=true
+                export ARM_CLIENT_ID=$servicePrincipalId
+                export ARM_TENANT_ID=$tenantId
+                export ARM_SUBSCRIPTION_ID=$(az account show --query id -o tsv)
+
+                echo "##[section]Terraform Plan"
+                terraform plan -out=tfplan
+
+                echo "##[section]Resources to create:"
+                terraform show -no-color tfplan | grep -E "^  #|will be created|will be updated"
+
+          # --- Terraform Apply ---
+          - task: AzureCLI@2
+            displayName: "Terraform Apply"
+            inputs:
+              azureSubscription: $(serviceConnection)
+              scriptType: bash
+              addSpnToEnvironment: true
+              scriptLocation: inlineScript
+              workingDirectory: $(workingDirectory)
+              inlineScript: |
+                set -euo pipefail
+
+                export ARM_USE_OIDC=true
+                export ARM_CLIENT_ID=$servicePrincipalId
+                export ARM_TENANT_ID=$tenantId
+                export ARM_SUBSCRIPTION_ID=$(az account show --query id -o tsv)
+
+                echo "##[section]Terraform Apply"
+                terraform apply tfplan
+
+          # --- Display Outputs ---
+          - task: AzureCLI@2
+            displayName: "Display Outputs → Copy to GitHub Secrets"
+            inputs:
+              azureSubscription: $(serviceConnection)
+              scriptType: bash
+              addSpnToEnvironment: true
+              scriptLocation: inlineScript
+              workingDirectory: $(workingDirectory)
+              inlineScript: |
+                set -euo pipefail
+
+                export ARM_USE_OIDC=true
+                export ARM_CLIENT_ID=$servicePrincipalId
+                export ARM_TENANT_ID=$tenantId
+                export ARM_SUBSCRIPTION_ID=$(az account show --query id -o tsv)
+
+                echo "=========================================================="
+                echo "  OIDC Bootstrap Complete — Copy these to GitHub Secrets"
+                echo "=========================================================="
+                echo ""
+                echo "GitHub → atlas-05-gha-oidc → Settings → Secrets → Actions"
+                echo ""
+                echo "  AZURE_CLIENT_ID       = $(terraform output -raw azure_client_id)"
+                echo "  AZURE_TENANT_ID       = $(terraform output -raw azure_tenant_id)"
+                echo "  AZURE_SUBSCRIPTION_ID = $(terraform output -raw azure_subscription_id)"
+                echo ""
+                echo "=========================================================="
+                echo "  Service Principal Object ID (for troubleshooting):"
+                echo "  $(terraform output -raw service_principal_object_id)"
+                echo "=========================================================="
+                echo ""
+                echo "Federated Credentials:"
+                terraform output -json federated_credentials | python3 -m json.tool
+
+  # ===========================================================================
+  # Stage 3: Destroy Backend RG Only
+  # ===========================================================================
+  # Deletes the backend resource group (storage account + tfstate blobs).
+  # App Registration + Federated Credentials are NOT touched — they're free
+  # and live in Entra ID, not inside this RG.
+  #
+  # After this, OIDC resources become unmanaged (no state file).
+  # To re-manage: re-run bootstrap (will re-create backend + import/recreate).
+  # ===========================================================================
+  - stage: DestroyBackend
+    displayName: "3 — Destroy Backend Storage"
+    condition: eq('${{ parameters.action }}', 'destroy')
+    jobs:
+      - deployment: DestroyBackendRG
+        displayName: "Delete RG: rg-atlas-tfstate"
+        environment: "atlas-05-destroy"
+        strategy:
+          runOnce:
+            deploy:
+              steps:
+                - task: AzureCLI@2
+                  displayName: "Delete Backend Resource Group"
+                  inputs:
+                    azureSubscription: $(serviceConnection)
+                    scriptType: bash
+                    scriptLocation: inlineScript
+                    inlineScript: |
+                      set -euo pipefail
+
+                      echo "##[warning]Deleting backend resource group: $(backendResourceGroup)"
+                      echo "This removes the storage account and all tfstate files."
+                      echo "App Registration + Federated Credentials are NOT affected."
+                      echo ""
+
+                      az group delete \
+                        --name $(backendResourceGroup) \
+                        --yes \
+                        --no-wait
+
+                      echo "##[section]Backend RG deletion initiated (async)."
+                      echo ""
+                      echo "What remains intact:"
+                      echo "  ✓ App Registration in Entra ID"
+                      echo "  ✓ Federated Credentials (GHA → Azure trust)"
+                      echo "  ✓ GitHub Secrets (AZURE_CLIENT_ID, TENANT_ID, SUBSCRIPTION_ID)"
+                      echo ""
+                      echo "What was deleted:"
+                      echo "  ✗ Resource group: $(backendResourceGroup)"
+                      echo "  ✗ Storage account: $(backendStorageAccount)"
+                      echo "  ✗ Terraform state files"
+                      echo ""
+                      echo "To re-bootstrap: run this pipeline again with action=bootstrap"
