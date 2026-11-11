@@ -20,7 +20,7 @@ The same CI/CD pipeline from [P4 (Azure DevOps)](https://github.com/manoj-2606/a
 
 ### OIDC Token Exchange Flow
 
-![OIDC Flow](docs/oidc-flow.svg)
+![OIDC Flow](docs/oidc-flow.png)
 
 **What gets stored as GitHub Secrets (IDs, not credentials):**
 - `AZURE_CLIENT_ID` — App Registration's client ID
@@ -56,7 +56,7 @@ Separate state files = independent lifecycle. Infrastructure can be created and 
 
 ### CI/CD Pipeline Flow
 
-![Pipeline Flow](docs/pipeline-flow.svg)
+![Pipeline Flow](docs/pipeline-flow.png)
 
 ### GitHub Actions Component Model
 
@@ -140,8 +140,8 @@ atlas-05-gha-oidc/
 ├── azure-pipelines-oidc-bootstrap.yml   ADO: one-time OIDC setup
 │
 ├── docs/
-│   ├── oidc-flow.svg                    OIDC token exchange diagram
-│   ├── pipeline-flow.svg                CI/CD pipeline flow diagram
+│   ├── oidc-flow.png                    OIDC token exchange diagram
+│   ├── pipeline-flow.png                CI/CD pipeline flow diagram
 │   ├── gha-vs-ado.md                    ADO vs GHA detailed comparison
 │   └── (screenshots after deployment)
 │
