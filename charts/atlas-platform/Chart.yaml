@@ -1,0 +1,9 @@
+apiVersion: v2
+name: atlas-platform
+description: Atlas Platform App — FastAPI REST API for portfolio projects
+type: application
+version: 1.0.0
+appVersion: "1.0.0"
+maintainers:
+  - name: Manoj Kumar R
+    url: https://github.com/manoj-2606
