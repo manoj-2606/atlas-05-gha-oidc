@@ -357,11 +357,17 @@ Each federated credential trusts a specific GitHub context. No wildcard — prod
 
 ## Lessons Learned
 
-<!-- Populated from logs.json after execution. Update this section post-run. -->
-
 | # | Stage | Error | Root Cause | Fix | Time Lost |
 |---|---|---|---|---|---|
-| — | — | — | — | — | — |
+| 1 | OIDC Bootstrap (TF Init) | `Error building ARM Config: Authenticating using the Azure CLI is only supported as a User` | `ARM_OIDC_TOKEN` not exported — Terraform fell back to Azure CLI auth which rejects service principals | Added `export ARM_OIDC_TOKEN=$idToken` to every `AzureCLI@2` step in bootstrap pipeline | ~10 min |
+| 2 | OIDC Bootstrap (TF Apply) | `403 Forbidden: Authorization_RequestDenied: Insufficient privileges to complete the operation` | `MI-ADO-API` had Contributor role (Azure resources) but no Entra ID permissions to create App Registrations | Assigned **Cloud Application Administrator** role to `MI-ADO-API` in Entra ID → Roles and administrators | ~15 min |
+| 3 | GHA Deploy (Startup) | `invalid value workflow reference: workflows must be defined at the top level of the .github/workflows/ directory` | Reusable workflows placed in `.github/workflows/reusable/` subdirectory — GHA doesn't allow this | Moved all 4 reusable workflow files to `.github/workflows/` and updated all `uses:` paths in `deploy.yml` and `destroy.yml` | ~10 min |
+| 4 | GHA Deploy (Azure Login) | `AADSTS700213: No matching federated identity record found for presented assertion subject` | GitHub changed OIDC subject claim format to include numeric IDs (`repo:user@ID/repo@ID:ref:...`) — Azure federated credentials expected the old format | Updated all 3 federated credentials in Entra ID with Organization ID (`74711656`) and Repository ID (`1453589490`) | ~20 min |
+| 5 | GHA Deploy (TF Apply) | `1.4 is not a supported Kubernetes version` | `dev.tfvars` had placeholder `aks_kubernetes_version = "1.4"` instead of a real version — comment said `# VERIFY` but was not updated | Changed to `1.36.5` (latest stable from `az aks get-versions`) | ~5 min |
+| 6 | GHA Deploy (TF Apply) | `403 Forbidden: AuthorizationFailed: does not have authorization to perform action 'Microsoft.Authorization/roleAssignments/write'` | GHA service principal (`atlas-05-gha-oidc-sp`) had Contributor but not permission to assign RBAC roles (AcrPull to AKS) | Assigned **User Access Administrator** role to `atlas-05-gha-oidc-sp` at subscription scope | ~10 min |
+| 7 | GHA Deploy (Helm) | `UPGRADE FAILED: another operation (install/upgrade/rollback) is in progress` | Previous failed run left a stuck Helm release in `pending-install` state | Added temporary `helm uninstall` before `helm upgrade` — removed after first successful deploy | ~5 min |
+| 8 | GHA Deploy (Pod) | `CrashLoopBackOff` — `Error loading ASGI app. Could not import module "app.main"` | Dockerfile double-nested the app code: `COPY atlas-platform-app/ ./app/` in builder + `COPY --from=builder /build/app ./app/` in runtime → `/app/app/app/main.py` | Changed runtime COPY to `COPY --from=builder /build/app .` so `main.py` lands at `/app/app/main.py` | ~15 min |
+| 9 | GHA Deploy (Smoke Test) | Smoke test failed — `curl` returned exit code 1 | `python:3.12-slim` image doesn't include `curl` — P4 had the same issue | Replaced `curl -sf` with `python -c "import urllib.request; ..."` in `deploy.sh` smoke test | ~5 min |
 
 ## GHA vs ADO — When to Use Which
 
