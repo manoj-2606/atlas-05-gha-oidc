@@ -1,0 +1,84 @@
+# =============================================================================
+# Reusable Workflow: Helm Deploy
+# =============================================================================
+# Helm upgrade + rollout wait + smoke test.
+# Called once per environment (dev, then staging after approval).
+#
+# Called by: deploy.yml → deploy-dev / deploy-staging jobs
+# Uses: composite action setup-tools
+# Runs: scripts/deploy.sh
+# =============================================================================
+
+name: Helm Deploy
+
+on:
+  workflow_call:
+    inputs:
+      environment:
+        required: true
+        type: string
+        description: "Target environment (dev or staging)"
+      image-name:
+        required: true
+        type: string
+      image-tag:
+        required: true
+        type: string
+      github-environment:
+        required: true
+        type: string
+        description: "GitHub Environment name for protection rules (atlas-05-dev or atlas-05-staging)"
+    secrets:
+      AZURE_CLIENT_ID:
+        required: true
+      AZURE_TENANT_ID:
+        required: true
+      AZURE_SUBSCRIPTION_ID:
+        required: true
+
+jobs:
+  deploy:
+    name: "Deploy to ${{ inputs.environment }}"
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.github-environment }}
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      # --- Checkout repo ---
+      - uses: actions/checkout@v4
+
+      # --- Setup Tools (Helm + kubectl) ---
+      - uses: ./.github/actions/setup-tools
+
+      # --- Download terraform outputs ---
+      - uses: actions/download-artifact@v4
+        with:
+          name: terraform-outputs
+          path: tf-outputs
+
+      # --- Azure Login (OIDC) ---
+      - uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      # --- Helm Deploy + Smoke Test ---
+      - name: Helm Deploy
+        run: |
+          chmod +x scripts/deploy.sh
+          ./scripts/deploy.sh
+        env:
+          ENVIRONMENT: ${{ inputs.environment }}
+          IMAGE_NAME: ${{ inputs.image-name }}
+          IMAGE_TAG: ${{ inputs.image-tag }}
+
+      # --- Error logging ---
+      - name: Log error context
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: error-context-deploy-${{ inputs.environment }}
+          path: error-context.json
+          retention-days: 1

@@ -1,6 +1,111 @@
-on: workflow_dispatch
+# =============================================================================
+# Atlas-05 — Main CI/CD Orchestrator
+# =============================================================================
+# Thin orchestrator that calls reusable workflows in sequence.
+# All real work lives in:
+#   - .github/workflows/reusable/*.yml  (job-level)
+#   - .github/actions/*                 (step-level)
+#   - scripts/*.sh                      (business logic)
+#
+# Flow:
+#   push to main → Infra → Build → Deploy(dev) → [Approval] → Deploy(staging)
+#   workflow_dispatch → same flow, manual trigger
+#
+# GHA equivalent of P4's azure-pipelines.yml
+# =============================================================================
+
+name: "Atlas-05 Deploy"
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: "Target environment"
+        required: true
+        default: "dev"
+        type: choice
+        options:
+          - dev
+          - staging
+
+# Top-level permissions — inherited by jobs that don't override
+permissions:
+  id-token: write
+  contents: read
+
 jobs:
-  placeholder:
+  # ===========================================================================
+  # Job 1: Infrastructure — Terraform Apply
+  # ===========================================================================
+  infra:
+    name: "01 · Infrastructure"
+    uses: ./.github/workflows/reusable/terraform-apply.yml
+    with:
+      environment: dev
+    secrets: inherit
+
+  # ===========================================================================
+  # Job 2: Build — Docker + Trivy + SBOM + ACR Push
+  # ===========================================================================
+  build:
+    name: "02 · Build + Scan + Push"
+    needs: infra
+    uses: ./.github/workflows/reusable/build-scan-push.yml
+    with:
+      image-name: atlas-platform-app
+      image-tag: "${{ github.run_number }}"
+    secrets: inherit
+
+  # ===========================================================================
+  # Job 3: Deploy to Dev — Helm + Smoke Test
+  # ===========================================================================
+  deploy-dev:
+    name: "03 · Deploy Dev"
+    needs: build
+    uses: ./.github/workflows/reusable/helm-deploy.yml
+    with:
+      environment: dev
+      image-name: atlas-platform-app
+      image-tag: "${{ github.run_number }}"
+      github-environment: atlas-05-dev
+    secrets: inherit
+
+  # ===========================================================================
+  # Job 4: Deploy to Staging — Approval Gate + Helm + Smoke Test
+  # ===========================================================================
+  # Only runs on main branch (not workflow_dispatch with env=dev)
+  # Staging approval configured in GitHub → Settings → Environments → atlas-05-staging
+  deploy-staging:
+    name: "04 · Deploy Staging"
+    needs: deploy-dev
+    if: github.ref == 'refs/heads/main'
+    uses: ./.github/workflows/reusable/helm-deploy.yml
+    with:
+      environment: staging
+      image-name: atlas-platform-app
+      image-tag: "${{ github.run_number }}"
+      github-environment: atlas-05-staging
+    secrets: inherit
+
+  # ===========================================================================
+  # Job 5: Summary — Print deployment info
+  # ===========================================================================
+  summary:
+    name: "05 · Summary"
+    needs: [deploy-dev, deploy-staging]
+    if: always() && needs.deploy-dev.result == 'success'
     runs-on: ubuntu-latest
     steps:
-      - run: echo "TODO"
+      - name: Deployment Summary
+        run: |
+          echo "=========================================="
+          echo "  Atlas-05 Deployment Summary"
+          echo "=========================================="
+          echo "  Run:     #${{ github.run_number }}"
+          echo "  Ref:     ${{ github.ref_name }}"
+          echo "  SHA:     ${{ github.sha }}"
+          echo "  Image:   atlas-platform-app:${{ github.run_number }}"
+          echo ""
+          echo "  Dev:     ${{ needs.deploy-dev.result }}"
+          echo "  Staging: ${{ needs.deploy-staging.result || 'skipped' }}"
+          echo "=========================================="

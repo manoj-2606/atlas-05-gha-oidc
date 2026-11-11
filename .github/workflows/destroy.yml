@@ -1,6 +1,82 @@
-on: workflow_dispatch
+# =============================================================================
+# Atlas-05 — Infrastructure Destroy
+# =============================================================================
+# Manual trigger only (workflow_dispatch).
+# Destroys AKS + ACR infrastructure via Terraform.
+#
+# Does NOT destroy OIDC trust (separate state: atlas-05-oidc.tfstate).
+# To destroy OIDC: run ADO pipeline with action=destroy.
+#
+# GHA equivalent of P4's azure-pipelines-destroy.yml
+# =============================================================================
+
+name: "Atlas-05 Destroy"
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: "Environment to destroy"
+        required: true
+        default: "dev"
+        type: choice
+        options:
+          - dev
+          - staging
+      confirm:
+        description: "Type 'destroy' to confirm"
+        required: true
+        type: string
+
+permissions:
+  id-token: write
+  contents: read
+
 jobs:
-  placeholder:
+  # ===========================================================================
+  # Safety Check — Confirm intent
+  # ===========================================================================
+  validate:
+    name: "Validate destroy intent"
     runs-on: ubuntu-latest
     steps:
-      - run: echo "TODO"
+      - name: Check confirmation
+        run: |
+          if [[ "${{ inputs.confirm }}" != "destroy" ]]; then
+            echo "##[error]Confirmation failed. You must type 'destroy' to proceed."
+            echo "##[error]Got: '${{ inputs.confirm }}'"
+            exit 1
+          fi
+          echo "Destroy confirmed for environment: ${{ inputs.environment }}"
+
+  # ===========================================================================
+  # Destroy — Terraform Destroy
+  # ===========================================================================
+  destroy:
+    name: "Destroy (${{ inputs.environment }})"
+    needs: validate
+    uses: ./.github/workflows/reusable/terraform-destroy.yml
+    with:
+      environment: ${{ inputs.environment }}
+    secrets: inherit
+
+  # ===========================================================================
+  # Summary
+  # ===========================================================================
+  summary:
+    name: "Destroy Summary"
+    needs: destroy
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Summary
+        run: |
+          echo "=========================================="
+          echo "  Atlas-05 Destroy Summary"
+          echo "=========================================="
+          echo "  Environment: ${{ inputs.environment }}"
+          echo "  Result:      ${{ needs.destroy.result }}"
+          echo ""
+          echo "  Note: OIDC trust is NOT destroyed."
+          echo "  To destroy OIDC: ADO pipeline → action=destroy"
+          echo "=========================================="

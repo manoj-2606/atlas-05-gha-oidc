@@ -1,0 +1,91 @@
+# =============================================================================
+# Reusable Workflow: Build, Scan, Push
+# =============================================================================
+# Docker build → Trivy scan (zero CRITICAL) → SBOM → ACR push.
+# Checks out BOTH atlas-05-gha-oidc + atlas-platform-app.
+#
+# Called by: deploy.yml → build job
+# Uses: composite action setup-tools
+# Runs: scripts/build.sh
+# =============================================================================
+
+name: Build Scan Push
+
+on:
+  workflow_call:
+    inputs:
+      image-name:
+        required: true
+        type: string
+        description: "Docker image name (e.g., atlas-platform-app)"
+      image-tag:
+        required: true
+        type: string
+        description: "Docker image tag (e.g., github.run_number)"
+    secrets:
+      AZURE_CLIENT_ID:
+        required: true
+      AZURE_TENANT_ID:
+        required: true
+      AZURE_SUBSCRIPTION_ID:
+        required: true
+
+jobs:
+  build:
+    name: "Build + Scan + Push"
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      # --- Checkout project repo ---
+      - uses: actions/checkout@v4
+
+      # --- Checkout atlas-platform-app (multi-repo) ---
+      - uses: actions/checkout@v4
+        with:
+          repository: manoj-2606/atlas-platform-app
+          path: atlas-platform-app
+
+      # --- Setup Tools (composite action: Trivy + Helm + kubectl) ---
+      - uses: ./.github/actions/setup-tools
+
+      # --- Download terraform outputs (from infra job) ---
+      - uses: actions/download-artifact@v4
+        with:
+          name: terraform-outputs
+          path: tf-outputs
+
+      # --- Azure Login (OIDC) ---
+      - uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      # --- Build + Scan + Push ---
+      - name: Build, Scan, Push
+        run: |
+          chmod +x scripts/build.sh
+          ./scripts/build.sh
+        env:
+          IMAGE_NAME: ${{ inputs.image-name }}
+          IMAGE_TAG: ${{ inputs.image-tag }}
+
+      # --- Upload scan artifacts ---
+      - uses: actions/upload-artifact@v4
+        with:
+          name: security-reports
+          path: |
+            trivy-report.json
+            sbom.json
+          retention-days: 1
+
+      # --- Error logging ---
+      - name: Log error context
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: error-context-build
+          path: error-context.json
+          retention-days: 1

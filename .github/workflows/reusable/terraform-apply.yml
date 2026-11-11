@@ -1,0 +1,77 @@
+# =============================================================================
+# Reusable Workflow: Terraform Apply
+# =============================================================================
+# Provisions AKS + ACR via atlas-infra-base module.
+# Uploads tf-outputs.json as artifact for downstream jobs.
+#
+# Called by: deploy.yml → infra job
+# Uses: composite action setup-terraform
+# Runs: scripts/infra.sh
+# =============================================================================
+
+name: Terraform Apply
+
+on:
+  workflow_call:
+    inputs:
+      environment:
+        required: true
+        type: string
+        description: "Target environment (dev or staging)"
+    secrets:
+      AZURE_CLIENT_ID:
+        required: true
+      AZURE_TENANT_ID:
+        required: true
+      AZURE_SUBSCRIPTION_ID:
+        required: true
+
+jobs:
+  terraform:
+    name: "Terraform Apply (${{ inputs.environment }})"
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      # --- Checkout repo (clean workspace in reusable workflows) ---
+      - uses: actions/checkout@v4
+
+      # --- Setup Terraform (composite action) ---
+      - uses: ./.github/actions/setup-terraform
+
+      # --- Azure Login (OIDC) ---
+      - uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      # --- Run infra script ---
+      - name: Terraform Init + Plan + Apply
+        run: |
+          chmod +x scripts/infra.sh
+          ./scripts/infra.sh
+        env:
+          ENVIRONMENT: ${{ inputs.environment }}
+          SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          ARM_USE_OIDC: "true"
+          ARM_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          ARM_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      # --- Upload tf-outputs.json for downstream jobs ---
+      - uses: actions/upload-artifact@v4
+        with:
+          name: terraform-outputs
+          path: terraform/infra/tf-outputs.json
+          retention-days: 1
+
+      # --- Error logging ---
+      - name: Log error context
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: error-context-infra
+          path: error-context.json
+          retention-days: 1
