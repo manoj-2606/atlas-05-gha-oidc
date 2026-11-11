@@ -35,7 +35,7 @@ WORKDIR /app
 COPY --from=builder /build/deps /usr/local/lib/python3.12/site-packages/
 
 # Copy application code
-COPY --from=builder /build/app ./app/
+COPY --from=builder /build/app .
 
 # Own the workdir
 RUN chown -R appuser:appgroup /app
