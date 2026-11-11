@@ -1,0 +1,5 @@
+{
+  "project": "atlas-05-gha-oidc",
+  "description": "CI/CD with GitHub Actions + OIDC Workload Identity Federation",
+  "entries": []
+}
