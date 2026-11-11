@@ -6,7 +6,7 @@
 project_name           = "atlas-05"
 environment            = "dev"
 location               = "centralindia"
-aks_kubernetes_version = "1.4" # VERIFY: az aks get-versions --location centralindia --output table
+aks_kubernetes_version = "1.36.5" # VERIFY: az aks get-versions --location centralindia --output table
 
 # FinOps: Right-sized for portfolio demo
 aks_node_count  = 1

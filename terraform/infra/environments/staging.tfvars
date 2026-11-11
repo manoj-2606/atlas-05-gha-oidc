@@ -11,7 +11,7 @@
 project_name           = "atlas-05"
 environment            = "staging"
 location               = "centralindia"
-aks_kubernetes_version = "1.4" # VERIFY: az aks get-versions --location centralindia --output table
+aks_kubernetes_version = "1.36.5" # VERIFY: az aks get-versions --location centralindia --output table
 
 aks_node_count  = 1
 aks_node_size   = "Standard_B2s"
