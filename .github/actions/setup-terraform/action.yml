@@ -1,0 +1,34 @@
+# =============================================================================
+# Composite Action: Setup Terraform
+# =============================================================================
+# Installs a pinned Terraform version on the runner.
+# Used by: infra job, destroy job.
+# NOT used by: build job, deploy job (they don't need Terraform).
+#
+# GHA equivalent of: ADO task "install terraform" inline script
+# Difference: this is reusable across jobs with one line:
+#   - uses: ./.github/actions/setup-terraform
+# =============================================================================
+
+name: "Setup Terraform"
+description: "Install pinned Terraform version"
+
+inputs:
+  terraform-version:
+    description: "Terraform version to install"
+    required: false
+    default: "1.9.8"
+
+runs:
+  using: "composite"
+  steps:
+    - name: Install Terraform ${{ inputs.terraform-version }}
+      uses: hashicorp/setup-terraform@v3
+      with:
+        terraform_version: ${{ inputs.terraform-version }}
+
+    - name: Verify Terraform
+      shell: bash
+      run: |
+        echo "##[section]Terraform installed"
+        terraform version

@@ -1,0 +1,58 @@
+# =============================================================================
+# Composite Action: Setup Tools
+# =============================================================================
+# Installs Trivy + Helm + kubectl on the runner.
+# Used by: build job (Trivy), deploy job (Helm + kubectl).
+#
+# Trivy: installed via apt repo (NOT GitHub release — those 404 silently)
+# Helm: installed via official install script (pinned version)
+# kubectl: already on ubuntu-latest runners, but we verify
+#
+# GHA equivalent of: ADO inline "install tools" script
+# Difference: reusable with one line:
+#   - uses: ./.github/actions/setup-tools
+# =============================================================================
+
+name: "Setup Tools"
+description: "Install Trivy, Helm, and verify kubectl"
+
+inputs:
+  trivy-version:
+    description: "Trivy version to install"
+    required: false
+    default: "0.58.0"
+  helm-version:
+    description: "Helm version to install"
+    required: false
+    default: "3.16.3"
+
+runs:
+  using: "composite"
+  steps:
+    # --- Trivy via apt repository (reliable — no 404s) ---
+    - name: Install Trivy ${{ inputs.trivy-version }}
+      shell: bash
+      run: |
+        echo "##[section]Installing Trivy via apt repository"
+        sudo apt-get install -y wget apt-transport-https gnupg lsb-release
+        wget -qO - https://aquasecurity.github.io/trivy-repo/deb/public.key | sudo gpg --dearmor -o /usr/share/keyrings/trivy.gpg
+        echo "deb [signed-by=/usr/share/keyrings/trivy.gpg] https://aquasecurity.github.io/trivy-repo/deb $(lsb_release -sc) main" | sudo tee /etc/apt/sources.list.d/trivy.list
+        sudo apt-get update
+        sudo apt-get install -y trivy
+        trivy --version
+
+    # --- Helm via official script ---
+    - name: Install Helm ${{ inputs.helm-version }}
+      shell: bash
+      run: |
+        echo "##[section]Installing Helm ${{ inputs.helm-version }}"
+        curl -fsSL https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | \
+          DESIRED_VERSION="v${{ inputs.helm-version }}" bash
+        helm version
+
+    # --- kubectl (pre-installed on ubuntu-latest, just verify) ---
+    - name: Verify kubectl
+      shell: bash
+      run: |
+        echo "##[section]kubectl version"
+        kubectl version --client=true
